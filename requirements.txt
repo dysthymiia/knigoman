@@ -1,6 +1,7 @@
-requests
 pandas
-beautifulsoup4
 pillow
 dropbox
 customtkinter
+flet
+requests
+beautifulsoup4
