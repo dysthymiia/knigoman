@@ -199,7 +199,6 @@ class InventoryMobileApp:
         self.scanned_items.clear()
         self.place_input.value = ""
         self.page.update()
-        self.page.update()
 
     def perform_place_search(self, e):
         query = self.place_input.value.strip().lower()
@@ -264,7 +263,6 @@ class InventoryMobileApp:
         
         self.place_input.value = "" 
         self.page.update()
-        self.page.update()
 
     def build_ui(self):
         saved_db_url = ""
@@ -298,7 +296,7 @@ class InventoryMobileApp:
             label="Штрихкод / Название", 
             hint_text="Ввод или скан...", 
             expand=True, 
-            autofocus=True,
+            # Убран автофокус, чтобы клавиатура не вылезала постоянно
             on_submit=self.perform_place_search 
         )
         
@@ -396,7 +394,6 @@ class InventoryMobileApp:
             expand=True, padding=10
         )
 
-        # Живая очередь удалена. Индексы навигации сдвинулись.
         self.page.navigation_bar = ft.NavigationBar(
             destinations=[
                 ft.NavigationBarDestination(icon=ft.Icons.SHOPPING_CART, label="Сборка"),
@@ -419,21 +416,34 @@ class InventoryMobileApp:
         self.view_db.visible = (idx == 3)
         self.view_settings.visible = (idx == 4)
         
-        if idx == 1:
-            self.page.update()
-            
         self.page.update()
 
+    # --- УМНЫЙ ПОИСК ---
     def smart_match(self, site_title, db_title):
         s = site_title.lower()
         d = db_title.lower()
+        
         if s in d or d in s: return True
+        
         s_norm = ' '.join(re.sub(r'[^\w\s]', '', s).split())
         d_norm = ' '.join(re.sub(r'[^\w\s]', '', d).split())
+        
         if s_norm and d_norm and (s_norm in d_norm or d_norm in s_norm): return True
-        s_words, d_words = s_norm.split(), d_norm.split()
-        if len(s_words) >= 4 and len(d_words) >= 4:
-            if s_words[:4] == d_words[:4]: return True
+        
+        s_words = s_norm.split()
+        d_words = d_norm.split()
+        
+        if len(s_words) >= 3 and len(d_words) >= 3:
+            if s_words[:3] == d_words[:3]: return True
+            
+        s_significant = [w for w in s_words if len(w) > 2]
+        d_significant = [w for w in d_words if len(w) > 2]
+        
+        if s_significant and d_significant:
+            matches = sum(1 for w in s_significant if w in d_significant)
+            if matches / len(s_significant) >= 0.7:
+                return True
+                
         return False
 
     def perform_login(self, status_label=None):
@@ -615,16 +625,25 @@ class InventoryMobileApp:
 
         btn.update()
 
+    # --- УМНАЯ ПРОВЕРКА КНИГ НА ПОЛКЕ ---
     def check_book_in_db(self, item, db):
-        # 1. Поиск строго по названию и сбор ВСЕХ локаций
         locations = []
+        site_full_text = item.get("full_text", "").lower()
+        
         for loc, books in db.items():
             for db_title, info in books.items():
-                if self.smart_match(item["title"], db_title):
+                db_balka = str(info.get("Balka code", "")).strip().lower()
+                
+                title_matched = self.smart_match(item["title"], db_title)
+                
+                balka_matched = False
+                if db_balka and len(db_balka) > 3 and db_balka in site_full_text:
+                    balka_matched = True
+                    
+                if title_matched or balka_matched:
                     if loc not in locations:
                         locations.append(loc)
         
-        # 2. Формирование ответа
         if locations:
             joined_locations = " | ".join(locations)
             return joined_locations, ft.Colors.GREEN_700
@@ -682,7 +701,6 @@ class InventoryMobileApp:
                 if item.get("qty_text"):
                     text_column.append(ft.Text(item["qty_text"], weight="bold", color=ft.Colors.RED_500, size=16))
                 
-                # Убрано ограничение на количество строк (max_lines) и многоточие, чтобы весь текст был виден
                 text_column.append(ft.Text(item["display_title"], size=14))
 
                 card_content = [
