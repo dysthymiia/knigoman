@@ -442,6 +442,19 @@ class InventoryMobileApp:
 
     # ================= ЛОГИКА ИИ-АССИСТЕНТА (РАЦИЯ) =================
     def toggle_recording(self, e):
+        # 1. Проверяем и запрашиваем системное разрешение на микрофон
+        try:
+            if not self.audio_recorder.has_permission():
+                self.ai_status.value = "⚠️ Разрешите доступ к микрофону и нажмите еще раз"
+                self.ai_status.color = ft.Colors.ORANGE_500
+                self.page.update()
+                # При попытке записи Android сам выкинет всплывающее окно с запросом
+                self.audio_recorder.start_recording(os.path.join(DB_FOLDER, "temp.m4a"))
+                self.audio_recorder.stop_recording()
+                return
+        except Exception:
+            pass # Если проверка не сработала, идем дальше
+
         audio_path = os.path.join(DB_FOLDER, "request.m4a")
         
         if self.record_btn.icon == ft.Icons.MIC:
@@ -454,7 +467,7 @@ class InventoryMobileApp:
             try:
                 self.audio_recorder.start_recording(audio_path)
             except Exception as ex:
-                self.ai_status.value = "Разреши доступ к микрофону!"
+                self.ai_status.value = "Нет доступа к микрофону!"
                 self.ai_status.color = ft.Colors.ORANGE_500
                 self.record_btn.icon = ft.Icons.MIC
                 self.record_btn.bgcolor = ft.Colors.PURPLE_700
