@@ -4,26 +4,30 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      # Обновили до v5, чтобы убрать ошибку Node.js 20
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       
+      # Обновили до v5, так как v4 устарел (ошибка setup-java v4 is deprecated)
       - name: Setup Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '17'
               
+      # Обновили до актуальной версии
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          update-environment: true
       
       - name: Install dependencies
-        # Добавлены все необходимые библиотеки для работы ИИ, аудио и Dropbox
         run: pip install flet flet-audio flet-audio-recorder requests beautifulsoup4 dropbox google-generativeai gtts
       
       - name: Build APK
-        run: printf 'y\n' | flet build apk --module-name main --include-packages flet_audio flet_audio_recorder --android-permissions android.permission.RECORD_AUDIO=true
+        # Убрали проблемный флаг. Flet сам найдет аудио-драйверы в файле requirements.txt
+        run: printf 'y\n' | flet build apk --module-name main --android-permissions android.permission.RECORD_AUDIO=true
       
       - name: Upload APK
         uses: actions/upload-artifact@v4
