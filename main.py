@@ -3,11 +3,21 @@ import os
 import sqlite3
 import requests
 import re
-import ast
 import threading
 import time
 from datetime import datetime
 from bs4 import BeautifulSoup
+
+# --- ИМПОРТЫ ДЛЯ ИИ И ЗВУКА ---
+import google.generativeai as genai
+from gtts import gTTS
+import flet_audio as fta             
+import flet_audio_recorder as far    
+
+# --- НАСТРОЙКА GEMINI ---
+GEMINI_API_KEY = "AQ.Ab8RN6JoDV-Afqq1tBI1iJh43G9_PqfqjgXh6hF1xsZPBYgeyQ"  # <--- ЗАМЕНИ НА СВОЙ КЛЮЧ!
+genai.configure(api_key=GEMINI_API_KEY)
+ai_model = genai.GenerativeModel('gemini-1.5-flash')
 
 DB_FOLDER = "databases"
 os.makedirs(DB_FOLDER, exist_ok=True)
@@ -27,6 +37,12 @@ class InventoryMobileApp:
         
         self.scanned_items = set()
 
+        # === НЕВИДИМЫЕ АУДИОКОМПОНЕНТЫ ДЛЯ ИИ ===
+        # Используем новые выделенные библиотеки для звука
+        self.audio_player = fta.Audio(autoplay=False)
+        self.audio_recorder = far.AudioRecorder()
+        self.page.overlay.extend([self.audio_player, self.audio_recorder])
+
         self.build_ui()
 
         saved_theme = self.load_theme()
@@ -36,7 +52,7 @@ class InventoryMobileApp:
         self.auto_sync_thread = threading.Thread(target=self.auto_update_loop, daemon=True)
         self.auto_sync_thread.start()
         
-        # При запуске ТИХО подтягиваем названия сборок с сайта
+        # При запуске пытаемся подтянуть названия сборок с сайта
         threading.Thread(target=self.fetch_collections, daemon=True).start()
 
     def load_theme(self):
@@ -123,7 +139,7 @@ class InventoryMobileApp:
                 with open(db_path, "rb") as f:
                     dbx.files_upload(f.read(), "/inventory_latest.db", mode=WriteMode.overwrite)
             except Exception as e:
-                print(f"Ошибка выгрузки в Dropbox: {e}")
+                pass
         threading.Thread(target=task, daemon=True).start()
 
     def download_and_extract_db(self, e):
@@ -321,6 +337,31 @@ class InventoryMobileApp:
             self.search_listview
         ], expand=True, visible=False)
 
+        # === НОВАЯ ВКЛАДКА: ИИ-АССИСТЕНТ (РАЦИЯ) ===
+        self.ai_status = ft.Text("Готов. Нажми и говори", color=ft.Colors.GREEN_500, size=18, weight="bold", text_align=ft.TextAlign.CENTER)
+        self.ai_progress = ft.ProgressRing(width=30, height=30, stroke_width=3, visible=False)
+        
+        self.record_btn = ft.FloatingActionButton(
+            icon=ft.Icons.MIC,
+            bgcolor=ft.Colors.PURPLE_700,
+            on_click=self.toggle_recording,
+            width=80, height=80
+        )
+
+        self.view_ai = ft.Column([
+            ft.Container(
+                content=ft.Column([
+                    ft.Text("🤖 Голосовой Кладовщик", weight="bold", size=22, color=ft.Colors.PURPLE_400),
+                    ft.Container(height=40),
+                    ft.Row([self.record_btn], alignment=ft.MainAxisAlignment.CENTER),
+                    ft.Container(height=40),
+                    ft.Row([self.ai_progress], alignment=ft.MainAxisAlignment.CENTER),
+                    ft.Row([self.ai_status], alignment=ft.MainAxisAlignment.CENTER)
+                ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                padding=30, bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST, border_radius=15, expand=True
+            )
+        ], expand=True, visible=False)
+
         # === ВКЛАДКА БАЗЫ (DROPBOX) ===
         self.db_input = ft.TextField(label="Прямая ссылка Dropbox", expand=True, value=saved_db_url)
         self.db_btn = ft.FilledButton("Загрузить базу сейчас", on_click=self.download_and_extract_db, bgcolor=ft.Colors.PURPLE_700, color=ft.Colors.WHITE)
@@ -366,7 +407,8 @@ class InventoryMobileApp:
             content=ft.Stack([
                 self.view_assembly, 
                 self.view_place,    
-                self.view_search, 
+                self.view_search,
+                self.view_ai,      # <--- Вкладка ИИ
                 self.view_db, 
                 self.view_settings
             ]),
@@ -378,11 +420,12 @@ class InventoryMobileApp:
                 ft.NavigationBarDestination(icon=ft.Icons.SHOPPING_CART, label="Сборка"),
                 ft.NavigationBarDestination(icon=ft.Icons.MOVE_TO_INBOX, label="Места"), 
                 ft.NavigationBarDestination(icon=ft.Icons.SEARCH, label="Поиск"),
+                ft.NavigationBarDestination(icon=ft.Icons.RECORD_VOICE_OVER, label="ИИ"),
                 ft.NavigationBarDestination(icon=ft.Icons.FOLDER, label="База"),
                 ft.NavigationBarDestination(icon=ft.Icons.SETTINGS, label="Настройки"),
             ],
             on_change=self.on_nav_change,
-            selected_index=3
+            selected_index=5
         )
 
         self.page.add(ft.SafeArea(content=self.main_container, expand=True))
@@ -392,9 +435,95 @@ class InventoryMobileApp:
         self.view_assembly.visible = (idx == 0)
         self.view_place.visible = (idx == 1)
         self.view_search.visible = (idx == 2)
-        self.view_db.visible = (idx == 3)
-        self.view_settings.visible = (idx == 4)
+        self.view_ai.visible = (idx == 3)
+        self.view_db.visible = (idx == 4)
+        self.view_settings.visible = (idx == 5)
         self.page.update()
+
+    # ================= ЛОГИКА ИИ-АССИСТЕНТА (РАЦИЯ) =================
+    def toggle_recording(self, e):
+        audio_path = os.path.join(DB_FOLDER, "request.m4a")
+        
+        if self.record_btn.icon == ft.Icons.MIC:
+            self.record_btn.icon = ft.Icons.STOP
+            self.record_btn.bgcolor = ft.Colors.RED_600
+            self.ai_status.value = "Слушаю... (Нажми для остановки)"
+            self.ai_status.color = ft.Colors.RED_500
+            self.page.update()
+            
+            try:
+                self.audio_recorder.start_recording(audio_path)
+            except Exception as ex:
+                self.ai_status.value = "Разреши доступ к микрофону!"
+                self.ai_status.color = ft.Colors.ORANGE_500
+                self.record_btn.icon = ft.Icons.MIC
+                self.record_btn.bgcolor = ft.Colors.PURPLE_700
+                self.page.update()
+        else:
+            self.audio_recorder.stop_recording()
+            self.record_btn.icon = ft.Icons.MIC
+            self.record_btn.bgcolor = ft.Colors.PURPLE_700
+            self.record_btn.disabled = True
+            
+            self.ai_progress.visible = True
+            self.ai_status.value = "Думаю..."
+            self.ai_status.color = ft.Colors.CYAN_500
+            self.page.update()
+            
+            threading.Thread(target=self.process_voice_request, args=(audio_path,), daemon=True).start()
+
+    def process_voice_request(self, audio_path):
+        time.sleep(0.5) 
+        try:
+            if not os.path.exists(audio_path):
+                raise Exception("Аудиофайл не записался")
+
+            audio_file = genai.upload_file(path=audio_path)
+            
+            db = self.load_databases()
+            catalog = []
+            for loc, books in db.items():
+                for title in books.keys():
+                    catalog.append(f"'{title}' -> {loc}")
+            
+            if not catalog:
+                context = "В базе данных нет ни одной книги."
+            else:
+                context = "\n".join(catalog)
+            
+            prompt = (
+                f"Ты складской помощник. В прикрепленном аудио пользователь задает вопрос о товаре.\n"
+                f"Найди ответ, опираясь строго на эту базу данных (формат 'Название' -> 'Стеллаж, Ячейка'):\n{context}\n\n"
+                "Отвечай коротко и четко. Назови только место (стеллаж и ячейку). Если в базе нет такого товара, скажи 'Не найдено'. "
+                "Твой ответ будет озвучен роботом, пиши только текст для озвучки (без звездочек и спецсимволов)."
+            )
+            
+            response = ai_model.generate_content([prompt, audio_file])
+            answer_text = response.text.replace('*', '').strip()
+            
+            genai.delete_file(audio_file.name)
+            
+            self.ai_status.value = "Озвучиваю..."
+            self.page.update()
+
+            tts = gTTS(text=answer_text, lang='ru')
+            answer_audio = os.path.join(DB_FOLDER, "answer.mp3")
+            tts.save(answer_audio)
+
+            self.ai_status.value = answer_text
+            self.ai_status.color = ft.Colors.GREEN_400
+            
+            self.audio_player.src = answer_audio
+            self.audio_player.play()
+
+        except Exception as ex:
+            self.ai_status.value = f"Сбой связи или тишина: {str(ex)[:30]}"
+            self.ai_status.color = ft.Colors.RED_500
+            
+        finally:
+            self.record_btn.disabled = False
+            self.ai_progress.visible = False
+            self.page.update()
 
     # --- УМНЫЙ ПОИСК И УСКОРЕННАЯ АВТОРИЗАЦИЯ ---
     def smart_match(self, site_title, db_title):
@@ -424,7 +553,8 @@ class InventoryMobileApp:
         login_url = "https://knigoman.com.ua/admin/index.php?route=common/login"
         self.web_session.headers.update({'User-Agent': 'Mozilla/5.0'})
         try:
-            # СУПЕР ОПТИМИЗАЦИЯ: Редиректим не на тяжелую страницу заказов, а на пустую панель
+            if not is_silent:
+                self.web_session.get(login_url, timeout=5)
             payload = {'username': self.auto_user, 'password': self.auto_pass, 'redirect': 'https://knigoman.com.ua/admin/index.php?route=common/home'}
             response = self.web_session.post(login_url, data=payload, timeout=8)
             
@@ -585,7 +715,6 @@ class InventoryMobileApp:
             return
 
         try:
-            # ОПТИМИЗАЦИЯ: limit=150 позволяет найти нужные сборки за секунду (мы не качаем все сотни книг)
             url = f"https://knigoman.com.ua/admin/index.php?route=crm/order&token={self.admin_token}&filter_order_status=23&filter_limit=150"
             response = self.web_session.get(url, timeout=10)
             
@@ -599,7 +728,6 @@ class InventoryMobileApp:
             soup = BeautifulSoup(response.text, 'html.parser')
             opts_dict = {}
 
-            # Ищем название сборки по всей строке заказа
             for row in soup.find_all('tr'):
                 row_text = row.get_text(separator=" ", strip=True)
                 m_name = re.search(r'(\d+_\d+)', row_text)
