@@ -7,3 +7,6 @@ requests
 beautifulsoup4
 google-generativeai
 gtts
+flet
+flet-audio
+flet-audio-recorder
