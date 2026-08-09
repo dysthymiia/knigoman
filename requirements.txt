@@ -1,0 +1,8 @@
+flet
+flet-audio
+flet-audio-recorder
+requests
+beautifulsoup4
+dropbox
+google-generativeai
+gtts
