@@ -19,24 +19,12 @@ jobs:
           python-version: '3.11'
           update-environment: true
 
-      # === ВОТ ЭТОТ ШАГ РЕШИТ ПРОБЛЕМУ ===
-      # Сервер сам создаст 100% правильный файл перед сборкой
-      - name: Force create perfect requirements.txt
-        run: |
-          echo "flet" > requirements.txt
-          echo "flet-audio" >> requirements.txt
-          echo "flet-audio-recorder" >> requirements.txt
-          echo "requests" >> requirements.txt
-          echo "beautifulsoup4" >> requirements.txt
-          echo "dropbox" >> requirements.txt
-          echo "google-generativeai" >> requirements.txt
-          echo "gtts" >> requirements.txt
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+      - name: Install Flet
+        run: pip install flet
       
       - name: Build APK
-        run: printf 'y\n' | flet build apk --module-name main --android-permissions android.permission.RECORD_AUDIO=true
+        # Флаг --clear-cache удалит старые хвосты и заставит Flet прочитать новый pyproject.toml
+        run: printf 'y\n' | flet build apk --module-name main --clear-cache
       
       - name: Upload APK
         uses: actions/upload-artifact@v4
