@@ -1,11 +1,8 @@
-pandas
-pillow
-dropbox
-customtkinter
 flet
-requests
-beautifulsoup4
-google-generativeai
-gtts
 flet-audio
 flet-audio-recorder
+requests
+beautifulsoup4
+dropbox
+google-generativeai
+gtts
