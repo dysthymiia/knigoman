@@ -7,8 +7,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       
+      # Обновлено до v5, чтобы убрать ошибку deprecated
       - name: Setup Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: '17'
@@ -17,14 +18,13 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          update-environment: true
-
-      - name: Install Flet
-        run: pip install flet
+      
+      - name: Install dependencies locally
+        run: pip install -r requirements.txt
       
       - name: Build APK
-        # Флаг --clear-cache удалит старые хвосты и заставит Flet прочитать новый pyproject.toml
-        run: printf 'y\n' | flet build apk --module-name main --clear-cache
+        # Компилятор сам прочтет requirements.txt, не споткнется об customtkinter и правильно вошьет диктофон
+        run: flet build apk --module-name main --android-permissions android.permission.RECORD_AUDIO=true
       
       - name: Upload APK
         uses: actions/upload-artifact@v4
