@@ -19,10 +19,12 @@ jobs:
           python-version: '3.11'
       
       - name: Install dependencies
-        run: pip install flet pandas requests beautifulsoup4 pillow
+        # Добавлены все необходимые библиотеки для работы ИИ, аудио и Dropbox
+        run: pip install flet flet-audio flet-audio-recorder requests beautifulsoup4 dropbox google-generativeai gtts
       
       - name: Build APK
-        run: printf 'y\n' | flet build apk --module-name main
+        # Добавлено разрешение на использование микрофона в Android
+        run: printf 'y\n' | flet build apk --module-name main --android-permissions android.permission.RECORD_AUDIO=true
       
       - name: Upload APK
         uses: actions/upload-artifact@v4
