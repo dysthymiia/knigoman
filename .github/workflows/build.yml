@@ -22,8 +22,7 @@ jobs:
         # Добавлены все необходимые библиотеки для работы ИИ, аудио и Dropbox
         run: pip install flet flet-audio flet-audio-recorder requests beautifulsoup4 dropbox google-generativeai gtts
       
-      - name: Build APK
-        # Добавлено разрешение на использование микрофона в Android
+      - - name: Build APK
         run: printf 'y\n' | flet build apk --module-name main --android-permissions android.permission.RECORD_AUDIO=true
       
       - name: Upload APK
