@@ -5,19 +5,13 @@ import requests
 import re
 import threading
 import time
+import base64
 from datetime import datetime
 from bs4 import BeautifulSoup
-
-# --- ИМПОРТЫ ДЛЯ ИИ И ЗВУКА ---
-import google.generativeai as genai
 from gtts import gTTS
-import flet_audio as fta             
-import flet_audio_recorder as far    
 
 # --- НАСТРОЙКА GEMINI ---
 GEMINI_API_KEY = "AQ.Ab8RN6JoDV-Afqq1tBI1iJh43G9_PqfqjgXh6hF1xsZPBYgeyQ"  # <--- ЗАМЕНИ НА СВОЙ КЛЮЧ!
-genai.configure(api_key=GEMINI_API_KEY)
-ai_model = genai.GenerativeModel('gemini-1.5-flash')
 
 DB_FOLDER = "databases"
 os.makedirs(DB_FOLDER, exist_ok=True)
@@ -37,10 +31,9 @@ class InventoryMobileApp:
         
         self.scanned_items = set()
 
-        # === НЕВИДИМЫЕ АУДИОКОМПОНЕНТЫ ДЛЯ ИИ ===
-        # Используем новые выделенные библиотеки для звука
-        self.audio_player = fta.Audio(autoplay=False)
-        self.audio_recorder = far.AudioRecorder()
+        # === НЕВИДИМЫЕ АУДИОКОМПОНЕНТЫ (ВСТРОЕННЫЕ В FLET 0.22.1) ===
+        self.audio_player = ft.Audio(autoplay=False)
+        self.audio_recorder = ft.AudioRecorder(audio_encoder=ft.AudioEncoder.WAV)
         self.page.overlay.extend([self.audio_player, self.audio_recorder])
 
         self.build_ui()
@@ -52,7 +45,6 @@ class InventoryMobileApp:
         self.auto_sync_thread = threading.Thread(target=self.auto_update_loop, daemon=True)
         self.auto_sync_thread.start()
         
-        # При запуске пытаемся подтянуть названия сборок с сайта
         threading.Thread(target=self.fetch_collections, daemon=True).start()
 
     def load_theme(self):
@@ -442,20 +434,7 @@ class InventoryMobileApp:
 
     # ================= ЛОГИКА ИИ-АССИСТЕНТА (РАЦИЯ) =================
     def toggle_recording(self, e):
-        # 1. Проверяем и запрашиваем системное разрешение на микрофон
-        try:
-            if not self.audio_recorder.has_permission():
-                self.ai_status.value = "⚠️ Разрешите доступ к микрофону и нажмите еще раз"
-                self.ai_status.color = ft.Colors.ORANGE_500
-                self.page.update()
-                # При попытке записи Android сам выкинет всплывающее окно с запросом
-                self.audio_recorder.start_recording(os.path.join(DB_FOLDER, "temp.m4a"))
-                self.audio_recorder.stop_recording()
-                return
-        except Exception:
-            pass # Если проверка не сработала, идем дальше
-
-        audio_path = os.path.join(DB_FOLDER, "request.m4a")
+        audio_path = os.path.join(DB_FOLDER, "request.wav")
         
         if self.record_btn.icon == ft.Icons.MIC:
             self.record_btn.icon = ft.Icons.STOP
@@ -467,7 +446,7 @@ class InventoryMobileApp:
             try:
                 self.audio_recorder.start_recording(audio_path)
             except Exception as ex:
-                self.ai_status.value = "Нет доступа к микрофону!"
+                self.ai_status.value = "Сбой микрофона. Разрешен ли доступ?"
                 self.ai_status.color = ft.Colors.ORANGE_500
                 self.record_btn.icon = ft.Icons.MIC
                 self.record_btn.bgcolor = ft.Colors.PURPLE_700
@@ -491,8 +470,7 @@ class InventoryMobileApp:
             if not os.path.exists(audio_path):
                 raise Exception("Аудиофайл не записался")
 
-            audio_file = genai.upload_file(path=audio_path)
-            
+            # 1. Формируем контекст из локальной базы
             db = self.load_databases()
             catalog = []
             for loc, books in db.items():
@@ -511,14 +489,33 @@ class InventoryMobileApp:
                 "Твой ответ будет озвучен роботом, пиши только текст для озвучки (без звездочек и спецсимволов)."
             )
             
-            response = ai_model.generate_content([prompt, audio_file])
-            answer_text = response.text.replace('*', '').strip()
+            # 2. Читаем аудио и переводим в base64
+            with open(audio_path, "rb") as f:
+                audio_data = f.read()
+            b64_audio = base64.b64encode(audio_data).decode("utf-8")
             
-            genai.delete_file(audio_file.name)
+            # 3. Отправляем REST-запрос напрямую в Gemini API
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+            payload = {
+                "contents": [{
+                    "parts": [
+                        {"text": prompt},
+                        {"inline_data": {"mime_type": "audio/wav", "data": b64_audio}}
+                    ]
+                }]
+            }
+            
+            api_response = requests.post(url, json=payload, timeout=30)
+            if api_response.status_code != 200:
+                raise Exception(f"API Error: {api_response.status_code}")
+                
+            data = api_response.json()
+            answer_text = data["candidates"][0]["content"]["parts"][0]["text"].replace('*', '').strip()
             
             self.ai_status.value = "Озвучиваю..."
             self.page.update()
 
+            # 4. Генерируем голос и воспроизводим
             tts = gTTS(text=answer_text, lang='ru')
             answer_audio = os.path.join(DB_FOLDER, "answer.mp3")
             tts.save(answer_audio)
@@ -530,7 +527,7 @@ class InventoryMobileApp:
             self.audio_player.play()
 
         except Exception as ex:
-            self.ai_status.value = f"Сбой связи или тишина: {str(ex)[:30]}"
+            self.ai_status.value = f"Сбой связи: {str(ex)[:30]}"
             self.ai_status.color = ft.Colors.RED_500
             
         finally:
