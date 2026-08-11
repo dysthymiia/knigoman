@@ -1,8 +1,5 @@
-flet
-flet-audio
-flet-audio-recorder
+flet==0.22.1
 requests
 beautifulsoup4
 dropbox
-google-generativeai
 gtts
